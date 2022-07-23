@@ -118,10 +118,7 @@ class Class:
 
     def Root(self) -> "Class":
         """Returns the root Class of this hierarchy."""
-        if self.kind == Class.Kind.ROOT:
-            return self
-        else:
-            return self.ancestors[0]
+        return self if self.kind == Class.Kind.ROOT else self.ancestors[0]
 
     def _RegisterLeaf(self, leaf: "Class") -> None:
         """Records that `leaf` is derived from self.
@@ -153,9 +150,8 @@ class Class:
                 assert self.id_range[1] == leaf.id + 1
                 already_visited = True
 
-        if not already_visited:
-            if self.kind != Class.Kind.ROOT:
-                self.Parent()._RegisterLeaf(leaf)
+        if not already_visited and self.kind != Class.Kind.ROOT:
+            self.Parent()._RegisterLeaf(leaf)
 
     def Finalize(self) -> None:
         """Populates additional attributes for `self` and derived Classes.
@@ -196,7 +192,7 @@ def main() -> None:
         if not match_result:
             sys.exit(f"Invalid format on line {line_num}")
 
-        prefix = match_result.group("prefix")
+        prefix = match_result["prefix"]
         if prefix == "":
             kind = Class.Kind.CONCRETE
         elif prefix == "root":
@@ -207,107 +203,101 @@ def main() -> None:
             sys.exit(f"Unrecognized class prefix '{prefix}' on line {line_num}")
 
         parent = None
-        if match_result.group("parent"):
+        if match_result["parent"]:
             if kind == Class.Kind.ROOT:
                 sys.exit(f"Root class cannot have parent on line {line_num}")
-            parent_name = match_result.group("parent")
+            parent_name = match_result["parent"]
             parent = classes[parent_name]
             if not parent:
                 sys.exit(f"Unknown class '{parent_name}' on line {line_num}")
             if parent.kind == Class.Kind.CONCRETE:
                 sys.exit(f"{parent.name} cannot be a parent on line {line_num}")
-        else:
-            if kind != Class.Kind.ROOT:
-                sys.exit(
-                    f"Non-root class must have a parent on line {line_num}"
-                )
+        elif kind != Class.Kind.ROOT:
+            sys.exit(
+                f"Non-root class must have a parent on line {line_num}"
+            )
 
-        classes[match_result.group("name")] = Class(
-            match_result.group("name"), kind, parent
-        )
+        classes[match_result["name"]] = Class(match_result["name"], kind, parent)
 
     for node in classes.values():
         if node.kind == Class.Kind.ROOT:
             node.Finalize()
 
-    header_file = open(header_filename, "w")
-    sys.stdout = header_file
+    with open(header_filename, "w") as header_file:
+        sys.stdout = header_file
 
-    print(f"// Generated from {input_filename} by explorer/gen_rtti.py\n")
-    trans_table = str.maketrans({"/": "_", ".": "_"})
-    guard_macro = input_filename.upper().translate(trans_table) + "_"
-    print(f"#ifndef {guard_macro}")
-    print(f"#define {guard_macro}")
-    print("\n#include <string_view>")
-    print("\nnamespace Carbon {\n")
+        print(f"// Generated from {input_filename} by explorer/gen_rtti.py\n")
+        trans_table = str.maketrans({"/": "_", ".": "_"})
+        guard_macro = f"{input_filename.upper().translate(trans_table)}_"
+        print(f"#ifndef {guard_macro}")
+        print(f"#define {guard_macro}")
+        print("\n#include <string_view>")
+        print("\nnamespace Carbon {\n")
 
-    for node in classes.values():
-        if node.kind != Class.Kind.CONCRETE:
-            assert node.id_range is not None
-            ids = range(node.id_range[0], node.id_range[1])
-            print(f"enum class {node.name}Kind {{")
-            for id in ids:
-                print(f"  {node.Root().leaves[id].name} = {id},")
-            print("};\n")
-
-            print(f"std::string_view {node.name}KindName({node.name}Kind k);\n")
-
-        if node.kind in [Class.Kind.ABSTRACT, Class.Kind.CONCRETE]:
-            print(
-                f"inline bool InheritsFrom{node.name}({node.Root().name}Kind"
-                + " kind) {"
-            )
-            if node.kind == Class.Kind.ABSTRACT:
+        for node in classes.values():
+            if node.kind != Class.Kind.CONCRETE:
                 assert node.id_range is not None
-                if node.id_range[0] == node.id_range[1]:
-                    print("  return false;")
-                else:
-                    range_begin = node.Root().leaves[node.id_range[0]].name
-                    print(
-                        f"  return kind >= {node.Root().name}Kind"
-                        + f"::{range_begin}"
-                    )
-                    if node.id_range[1] < len(node.Root().leaves):
-                        range_end = node.Root().leaves[node.id_range[1]].name
-                        print(
-                            f"      && kind < {node.Root().name}Kind"
-                            + f"::{range_end}"
-                        )
-                    print("      ;")
-            elif node.kind == Class.Kind.CONCRETE:
+                ids = range(node.id_range[0], node.id_range[1])
+                print(f"enum class {node.name}Kind {{")
+                for id in ids:
+                    print(f"  {node.Root().leaves[id].name} = {id},")
+                print("};\n")
+
+                print(f"std::string_view {node.name}KindName({node.name}Kind k);\n")
+
+            if node.kind in [Class.Kind.ABSTRACT, Class.Kind.CONCRETE]:
                 print(
-                    f"    return kind == {node.Root().name}Kind::{node.name};"
+                    f"inline bool InheritsFrom{node.name}({node.Root().name}Kind"
+                    + " kind) {"
                 )
-            print("}\n")
+                if node.kind == Class.Kind.ABSTRACT:
+                    assert node.id_range is not None
+                    if node.id_range[0] == node.id_range[1]:
+                        print("  return false;")
+                    else:
+                        range_begin = node.Root().leaves[node.id_range[0]].name
+                        print(
+                            f"  return kind >= {node.Root().name}Kind"
+                            + f"::{range_begin}"
+                        )
+                        if node.id_range[1] < len(node.Root().leaves):
+                            range_end = node.Root().leaves[node.id_range[1]].name
+                            print(
+                                f"      && kind < {node.Root().name}Kind"
+                                + f"::{range_end}"
+                            )
+                        print("      ;")
+                elif node.kind == Class.Kind.CONCRETE:
+                    print(
+                        f"    return kind == {node.Root().name}Kind::{node.name};"
+                    )
+                print("}\n")
 
-    print("}  // namespace Carbon\n")
-    print(f"#endif  // {guard_macro}")
+        print("}  // namespace Carbon\n")
+        print(f"#endif  // {guard_macro}")
 
-    header_file.close()
+    with open(cpp_filename, "w") as cpp_file:
+        sys.stdout = cpp_file
 
-    cpp_file = open(cpp_filename, "w")
-    sys.stdout = cpp_file
+        print(f"// Generated from {input_filename} by explorer/gen_rtti.py\n")
+        print(f'#include "{relative_header}"')
+        print("\nnamespace Carbon {\n")
+        for node in classes.values():
+            if node.kind != Class.Kind.CONCRETE:
+                assert node.id_range is not None
+                ids = range(node.id_range[0], node.id_range[1])
+                print(f"std::string_view {node.name}KindName({node.name}Kind k) {{")
+                print("  switch(k) {")
+                for id in ids:
+                    name = node.Root().leaves[id].name
+                    desc = " ".join(
+                        w.lower() for w in re.sub(r"([A-Z])", r" \1", name).split()
+                    )
+                    print(f'    case {node.name}Kind::{name}: return "{desc}";')
+                print("  }")
+                print("}\n")
 
-    print(f"// Generated from {input_filename} by explorer/gen_rtti.py\n")
-    print(f'#include "{relative_header}"')
-    print("\nnamespace Carbon {\n")
-    for node in classes.values():
-        if node.kind != Class.Kind.CONCRETE:
-            assert node.id_range is not None
-            ids = range(node.id_range[0], node.id_range[1])
-            print(f"std::string_view {node.name}KindName({node.name}Kind k) {{")
-            print("  switch(k) {")
-            for id in ids:
-                name = node.Root().leaves[id].name
-                desc = " ".join(
-                    w.lower() for w in re.sub(r"([A-Z])", r" \1", name).split()
-                )
-                print(f'    case {node.name}Kind::{name}: return "{desc}";')
-            print("  }")
-            print("}\n")
-
-    print("}  // namespace Carbon\n")
-    cpp_file.close()
+        print("}  // namespace Carbon\n")
 
 
 if __name__ == "__main__":
